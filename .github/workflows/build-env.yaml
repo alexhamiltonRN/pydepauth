@@ -22,30 +22,9 @@ jobs:
         run: |
           pip install uv pip-audit cyclonedx-bom pyyaml
       
-      - name: Convert deps.yaml
-        run: |
-          if (Test-Path "env/deps.yaml") {
-            python - <<EOF
-          import yaml 
-          data = yaml.safe_load(open("env/deps.yaml"))
-          with open("env/requirements.in", "w") a f:
-            for dep in data.get("dependencies", []):
-              f.write(dep + "\n")
-          EOF  
-          }
       
-      - name: Inject dependencies into pyproject
-        run: |
-          python - <<EOF
-          import tomllib, tomli_w 
-          with open("pyproject.toml", "rb") as f:
-            data = tomllib.load(f)
-          deps = open("env/requirements.in").read().splitlines()
-          data["project"]["dependencies"] = deps
-
-          with open("pyproject.toml", "wb") as f: 
-            tomli_w.dump(data, f)
-          EOF
+      - name: Prepare dependencies
+        run: python scripts/build_deps.py
         
       # Generate lock file
       - name: Generate uv.lock
