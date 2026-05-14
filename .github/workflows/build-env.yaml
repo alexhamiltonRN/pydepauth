@@ -1,0 +1,84 @@
+name: Build Python Environment
+
+on:
+  push:
+    paths: 
+      - "env/**"
+  workflow_dispatch:
+
+jobs: 
+  build: 
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python 
+        uses: actions/setup-python@v5
+        with: 
+          python-version: "3.12"
+      
+      - name: Install tools
+        run: |
+          pip install uv pip-audit cyclonedx-bom pyyaml
+      
+      - name: Convert deps.yaml
+        run: |
+          if (Test-Path "env/deps.yaml") {
+            python - <<EOF
+          import yaml 
+          data = yaml.safe_load(open("env/deps.yaml"))
+          with open("env/requirements.in", "w") a f:
+            for dep in data.get("dependencies", []):
+              f.write(dep + "\n")
+          EOF  
+          }
+      
+      - name: Inject dependencies into pyproject
+        run: |
+          python - <<EOF
+          import tomllib, tomli_w 
+          with open("pyproject.toml", "rb") as f:
+            data = tomllib.load(f)
+          deps = open("env/requirements.in").read().splitlines()
+          data["project"]["dependencies"] = deps
+
+          with open("pyproject.toml", "wb") as f: 
+            tomli_w.dump(data, f)
+          EOF
+        
+      # Generate lock file
+      - name: Generate uv.lock
+        run: uv lock
+
+      # Export requirements.txt with hashes
+      - name: Export requirements.txt
+        run: uv export --format requirements-txt -o artifacts/requirements.txt
+
+      # Sync environment (for audit + sbom)
+      - name: Install environment 
+        run: uv sync
+
+      # Run vulnerability scan
+      - name: Run pip-audit 
+        run: pip-audit
+      
+      # Generate SBOM
+      - name: Generate SBOM
+        run: cyclonedx-py environment -o artifacts/sbom.json 
+
+      # Move uv.lock into artifacts 
+      - name: Move lockfile 
+        run: |
+          mkdir artifacts -Force 
+          move uv.lock artifacts/uv.lock
+
+      # Commit artifacts back to repo 
+      - name: Commit artifacts 
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+        
+          git add artifacts/
+          git commit -m "Update environment artifacts" || echo "No changes"
+          git push
